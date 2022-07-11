@@ -2,15 +2,109 @@ const pool = require('../lib/utils/pool');
 const setup = require('../data/setup');
 const request = require('supertest');
 const app = require('../lib/app');
+const UserService = require('../lib/services/UserService');
+const { get } = require('../lib/app');
+const { agent } = require('supertest');
 
-describe('backend-express-template routes', () => {
+const mockUser = {
+  firstName: 'Test',
+  lastName: 'User',
+  email: 'test@example.com',
+  password: '12345',
+};
+
+const registerAndLogin = async (userProps = {}) => {
+  const password = userProps.password ?? mockUser.password;
+
+  // Create an "agent" that gives us the ability
+  // to store cookies between requests in a test
+  const agent = request.agent(app);
+
+  // Create a user to sign in with
+  const user = await UserService.create({ ...mockUser, ...userProps });
+
+  // ...then sign in
+  const { email } = user;
+  await agent.post('/api/v1/users/sessions').send({ email, password });
+  return [agent, user];
+};
+
+describe('secret routes', () => {
   beforeEach(() => {
     return setup(pool);
   });
-  it('example test - delete me!', () => {
-    expect(1).toEqual(1);
+
+  it('creates a new user', async () => {
+    //api/v1 is standard naming for versions
+    const res = await request(app).post('/api/v1/users').send(mockUser);
+    const { firstName, lastName, email } = mockUser;
+
+    expect(res.body).toEqual({
+      id: expect.any(String),
+      firstName,
+      lastName,
+      email,
+    });
   });
-  afterAll(() => {
-    pool.end();
+
+  it('returns the current user', async () => {
+    const [agent, user] = await registerAndLogin();
+    const me = await agent.get('/api/v1/users/me');
+
+    expect(me.body).toEqual({
+      ...user,
+      exp: expect.any(Number),
+      iat: expect.any(Number),
+    });
   });
+
+  it('should return a 403 when signed in but not admin and listing all users', async () => {
+    const [agent] = await registerAndLogin();
+    const res = await agent.get('/api/v1/users');
+    expect(res.body).toEqual({
+      message: 'You do not have access to view this page',
+      status: 403,
+    });
+  });
+
+  it('should return a 401 when signed out and listing all users', async () => {
+    const res = await request(app).get('/api/v1/users');
+
+    expect(res.body).toEqual({
+      message: 'You must be signed in to continue',
+      status: 401,
+    });
+  });
+
+  it('should return a list of users if signed in as admin', async () => {
+    const [agent, user] = await registerAndLogin({ email: 'admin' });
+    const res = await agent.get('/api/v1/users');
+    // console.log(res);
+
+    expect(res.body).toEqual([{ ...user }]);
+  });
+});
+
+it('should make sure secret data is secret', async () => {
+  const resp = await request(app).get('/api/v1/secrets');
+
+  expect(resp.body).toEqual({
+    message: 'You must be signed in to continue',
+    status: 401,
+  });
+});
+
+it('should delete session', async () => {
+  const [agent, user] = await registerAndLogin();
+  //cant use delete here as a const since its a reserved word
+  const remove = await agent.delete('/api/v1/users/sessions');
+  expect(remove.body).not.toEqual({
+    ...user,
+    exp: expect.any(Number),
+    iat: expect.any(Number),
+  });
+});
+
+afterAll(() => {
+  pool.end();
 });
