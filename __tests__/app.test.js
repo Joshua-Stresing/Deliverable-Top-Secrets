@@ -3,6 +3,8 @@ const setup = require('../data/setup');
 const request = require('supertest');
 const app = require('../lib/app');
 const UserService = require('../lib/services/UserService');
+const { get } = require('../lib/app');
+const { agent } = require('supertest');
 
 const mockUser = {
   firstName: 'Test',
@@ -89,6 +91,17 @@ it('should make sure secret data is secret', async () => {
   expect(resp.body).toEqual({
     message: 'You must be signed in to continue',
     status: 401,
+  });
+});
+
+it('should delete session', async () => {
+  const [agent, user] = await registerAndLogin();
+  //cant use delete here as a const since its a reserved word
+  const remove = await agent.delete('/api/v1/users/sessions');
+  expect(remove.body).not.toEqual({
+    ...user,
+    exp: expect.any(Number),
+    iat: expect.any(Number),
   });
 });
 
